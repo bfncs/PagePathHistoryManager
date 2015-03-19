@@ -5,7 +5,7 @@
  *
  * Manage PagePathHistory entries for any page on the Page Edit form.
  *
- * @version 0.0.1
+ * @version 1.0.0
  * @license MIT
  * @author Marc Löhe <marc@marcloehe.de>
  * @copyright Copyright (c) 2015, Marc Löhe
@@ -156,7 +156,7 @@ class PagePathHistoryManager extends Process implements Module
             throw new WireException('No page found for given path.');
         }
 
-        $path = $this->sanitizer->url($this->input->{$isPost ? 'post' : 'get'}('path'));
+        $path = $this->input->{$isPost ? 'post' : 'get'}('path');
         $redirectUrl = "{$this->processPage->path}?id={$pageId}&path={$path}";
 
         if ($isPost) {
