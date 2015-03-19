@@ -1,0 +1,16 @@
+.pph-man-table-header {
+    margin-top: 1em;
+    text-decoration: underline;
+}
+
+.content .actions .pph-man-btn-create {
+    display: inline-block;
+    margin-top: 1em!important;
+    margin-bottom: 2em;
+    padding: .4em 1em;
+    font-weight: 700;
+}
+
+.content .AdminDataList td .actions .pph-man-item-delete {
+    color: #fff;
+}
