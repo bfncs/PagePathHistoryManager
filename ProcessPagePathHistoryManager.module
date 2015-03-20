@@ -1,0 +1,302 @@
+<?php
+
+/**
+ * Page Path History Manager Process Module
+ *
+ * Manage PagePathHistory entries for any page on the Page Edit form.
+ *
+ * @version 1.1.0
+ * @license MIT
+ * @author Marc Löhe <marc@marcloehe.de>
+ * @copyright Copyright (c) 2015, Marc Löhe
+ */
+class ProcessPagePathHistoryManager extends Process
+{
+    /**
+     * @var PagePathHistoryManager Instance of history manager
+     */
+    protected $manager;
+    /**
+     * @var Page Admin page where the module process is registered
+     */
+    protected $processPage;
+
+    /**
+     * @var string Url of ProcessPageEdit page
+     */
+    protected $editUrl;
+
+    /**
+     * Build meta information for module integration.
+     *
+     * @return array Module information
+     */
+    public static function getModuleInfo()
+    {
+        return array(
+            'title' => __('Page Path History Manager Process'),
+            'version' => 110,
+            'summary' => __('Manage PagePathHistory entries for any page on the Page Edit form.'),
+            'author' => 'Marc Löhe',
+            'icon' => 'archive',
+            'requires' => array('PagePathHistoryManager', 'ProcessWire>=2.4.0', 'PHP>=5.4.0'),
+            'permission' => 'page-edit',
+        );
+    }
+
+    /**
+     * Module initialization.
+     *
+     * @return void
+     */
+    public function init()
+    {
+        parent::init();
+
+        $this->manager = $this->modules->get('PagePathHistoryManager');
+
+        $processPageName = strtolower(get_class($this));
+        $this->processPage = $this->pages->get("name={$processPageName},has_parent={$this->config->adminRootPageID},include=all");
+
+        $this->editUrl = $this->config->urls->admin . 'page/edit/';
+    }
+
+    /**
+     * Handle history path creation requests.
+     *
+     * @return string Page output
+     * @throws WireException
+     */
+    public function ___execute()
+    {
+        $out = '';
+
+        $isPost = 0 < strlen($this->input->post('id'));
+        $pageId = (int) $this->input->{$isPost ? 'post' : 'get'}('id');
+
+        if (!$pageId) {
+            throw new WireException('Please supply a valid page id.');
+        }
+
+        $page = $this->pages->get($pageId);
+        if (!$page || $page instanceof NullPage) {
+            throw new WireException('No page found for given path.');
+        }
+
+        $path = $this->input->{$isPost ? 'post' : 'get'}('path');
+        $redirectUrl = "{$this->processPage->path}?id={$pageId}&path={$path}";
+
+        if ($isPost) {
+            // Check whether path is valid
+            if (!$path) {
+                $msg = $this->_('Please enter a valid path.'); // Message: invalid path given
+                $this->message($msg, Notice::warning);
+                $this->session->redirect($redirectUrl);
+            }
+
+            // Make sure that path starts with but doesn't end with slash
+            $path = '/' . trim($path, '/');
+
+            // Prepare path selector value
+            $pathSelector = $this->sanitizer->selectorValue($path);
+
+            // Check whether path is already used as regular path for another page
+            if (0 < $this->pages->count("path={$pathSelector},include=all")) {
+                $msg = $this->_('The requested path is already in use by another page.'); // Message: path already in use
+                $this->message($msg, Notice::warning);
+                $this->session->redirect($redirectUrl);
+            }
+
+            // Check whether path is already used as history path for another page
+            $existingHistoryPage = $this->manager->fetchPageByHistoryPath($pathSelector);
+            if ($existingHistoryPage && !($existingHistoryPage instanceof NullPage)) {
+                $msg = $this->_('The requested path is already in use as history path of another page.'); // Message: path already in use as history path
+                $this->message($msg, Notice::warning);
+                $this->session->redirect($redirectUrl);
+            }
+
+            // Try to add path to the database
+            $success = $this->manager->addHistoryPath($path, $pageId);
+
+            // Prepare message
+            $msg = $success ?
+                $this->_('Successfully added history path "%1$s" for page "%2$s".') : // Message: history path was added
+                $this->_('Unable to add history path "%1$s" for page "%2$s".'); // Message: history path could not be added
+            $msgFlags = Notice::log;
+            if (!$success) {
+                $msgFlags |= Notice::warning;
+            }
+            $this->message(sprintf($msg, $path, $page->path), $msgFlags);
+
+            // Redirect to page edit form
+            $pageEditUrl = $this->editUrl . "?id={$page->id}";
+            $this->session->redirect($pageEditUrl);
+        }
+
+        $form = $this->buildFormCreateHistoryPath($page, $path);
+        $out .= $form->render();
+
+        return $out;
+    }
+
+    /**
+     * Handle history path deletion requests.
+     *
+     * @return string Page output
+     * @throws WireException
+     */
+    public function ___executeDelete()
+    {
+        $out = '';
+        $isPost = 0 < strlen($this->input->post('path'));
+        $path = $this->input->{$isPost ? 'post' : 'get'}('path');
+        if (!$path) {
+            throw new WireException('Please supply a valid path.');
+        }
+
+        $page = $this->manager->fetchPageByHistoryPath($path);
+        if (!$page || $page instanceof NullPage) {
+            throw new WireException('No page found for given path.');
+        }
+
+        if ($isPost) {
+            // Redirect back if confirmation was not checked
+            if (!$this->input->post('confirmed')) {
+                $msg = $this->_('Please confirm the deletion of path "%s".'); // Message: deletion not confirmed
+                $this->message(sprintf($msg, $path), Notice::warning);
+                $this->session->redirect("{$this->processPage->path}delete?path={$path}");
+            }
+
+            // Try to delete history path from database
+            $success = $this->manager->deleteHistoryPath($path);
+
+            // Prepare message
+            $msg = $success ?
+                $this->_('Successfully deleted history path "%s".') : // Message: history path was deleted
+                $this->_('Unable to delete history path "%s".'); // Message: history path could not be deleted
+            $msgFlags = Notice::log;
+            if (!$success) {
+                $msgFlags |= Notice::warning;
+            }
+            $this->message(sprintf($msg, $path), $msgFlags);
+
+            // Redirect to page edit form
+            $pageEditUrl = $this->editUrl . "?id={$page->id}";
+            $this->session->redirect($pageEditUrl);
+        }
+
+        $form = $this->buildFormDeleteConfirmation($path, $page);
+        $out .= $form->render();
+
+        return $out;
+    }
+
+    public function install()
+    {
+        parent::___install();
+
+        /* Create manager page */
+        $processPageName = strtolower(get_class($this->manager));
+        if (!count($this->pages->find("name={$processPageName},include=all"))) {
+            $p = new Page();
+            $p->template = $this->templates->get('admin');
+            $p->title = 'Page Path History Manager';
+            $p->name = $processPageName;
+            $p->parent = $this->pages->get(3); // Create as children of /admin/pages
+            $p->status = Page::statusHidden | Page::statusSystem; // Hide in menu and prevent deletion
+            $p->process = $this;
+            $p->save();
+        }
+    }
+
+    public function uninstall()
+    {
+        parent::___uninstall();
+
+        /* Delete manager page */
+        $processPageName = strtolower(get_class($this->manager));
+        $p = $this->pages->get("name={$processPageName},include=all");
+        if ($p && !($p instanceof NullPage)) {
+            $p->status = Page::statusSystemOverride; // Allow status override
+            $p->status = 0; // Remove system status to enable deletion
+            $this->pages->delete($p);
+        }
+    }
+
+    public function getProcessPage()
+    {
+        return $this->processPage;
+    }
+
+    /**
+     * Build the path creation form for a given page (and optional path).
+     *
+     * @param Page $page The page for which the path should be created.
+     * @param string $path A path to pre-fill the form with. Optional.
+     * @return InputfieldForm The form to create a path.
+     */
+    protected function buildFormCreateHistoryPath($page, $path = '')
+    {
+        /* @var InputfieldForm $form */
+        $form = $this->modules->get('InputfieldForm');
+        $form->attr('method', 'post');
+        $form->description = sprintf($this->_('Create history path for page "%s"'), $page->path); // Path creation form headline
+
+        /* @var InputfieldHidden $field */
+        $field = $this->modules->get('InputfieldHidden');
+        $field->attr('name', 'id');
+        $field->attr('value', $page->id);
+        $form->append($field);
+
+        /* @var InputfieldHidden $field */
+        $field = $this->modules->get('InputfieldText');
+        $field->attr('name', 'path');
+        $field->attr('value', $path);
+        $field->label = $this->_('Path');
+        $field->description = $this->_('Please enter the URL you want to add for this page.');
+        $form->append($field);
+
+        /* @var InputfieldSubmit $field */
+        $field = $this->modules->get('InputfieldSubmit');
+        $form->append($field);
+
+        return $form;
+    }
+
+    /**
+     * Build the path deletion confirmation form for a given page and path.
+     *
+     * @param string $path The path to be deleted.
+     * @param Page $page The page for which the path should be deleted.
+     * @return InputfieldForm The form to confirm the deletion.
+     */
+    protected function buildFormDeleteConfirmation($path, $page)
+    {
+        /* @var InputfieldForm $form */
+        $form = $this->modules->get('InputfieldForm');
+        $form->attr('action', 'delete');
+        $form->attr('method', 'post');
+        $form->description = sprintf($this->_('Delete history path "%1$s" for page "%2$s"'), $path, $page->path); // Path deletion confirmation form headline
+
+        /* @var InputfieldHidden $field */
+        $field = $this->modules->get('InputfieldHidden');
+        $field->attr('name', 'path');
+        $field->attr('value', $path);
+        $form->append($field);
+
+        /* @var InputfieldCheckbox $field */
+        $field = $this->modules->get('InputfieldCheckbox');
+        $field->attr('name', 'confirmed');
+        $field->attr('value', 'confirmed');
+        $field->label = $this->_('Are you sure?'); // Checkbox label to confirm they want to delete a given history path
+        $field->description = $this->_('Please confirm that you understand the above by clicking the checkbox below.'); // Checkbox description to confirm they want to delete a given history path
+        $form->append($field);
+
+        /* @var InputfieldSubmit $field */
+        $field = $this->modules->get('InputfieldSubmit');
+        $form->append($field);
+
+        return $form;
+    }
+
+}

@@ -5,12 +5,12 @@
  *
  * Manage PagePathHistory entries for any page on the Page Edit form.
  *
- * @version 1.0.0
+ * @version 1.1.0
  * @license MIT
  * @author Marc Löhe <marc@marcloehe.de>
  * @copyright Copyright (c) 2015, Marc Löhe
  */
-class PagePathHistoryManager extends Process implements Module
+class PagePathHistoryManager extends WireData implements Module
 {
     /**
      * @var Page Save currently edited page
@@ -41,9 +41,11 @@ class PagePathHistoryManager extends Process implements Module
     {
         return array(
             'title' => __('Page Path History Manager'),
-            'version' => 100,
+            'version' => 110,
             'summary' => __('Manage PagePathHistory entries for any page on the Page Edit form.'),
             'author' => 'Marc Löhe',
+            'icon' => 'archive',
+            'installs' => 'ProcessPagePathHistoryManager',
             'requires' => array('ProcessWire>=2.4.0', 'PHP>=5.4.0'),
             'singular' => true,
             'autoload' => 'process=ProcessPageEdit',
@@ -60,8 +62,6 @@ class PagePathHistoryManager extends Process implements Module
      */
     public function init()
     {
-        parent::init();
-
         // Determine page path history module and db table
         $active = false;
         $implementingModules = array(
@@ -83,8 +83,10 @@ class PagePathHistoryManager extends Process implements Module
 
         // Add hooks and setup needed variables
         $this->editUrl = $this->config->urls->admin . 'page/edit/';
-        $processPageName = strtolower(__CLASS__);
+
+        $processPageName = strtolower('ProcessPagePathHistoryManager');
         $this->processPage = $this->pages->get("name={$processPageName},has_parent={$this->config->adminRootPageID},include=all");
+
         $this->addHookBefore('ProcessPageEdit::execute', $this, 'hookBeforeProcessPageEditExecute');
         $this->addHookAfter('ProcessPageEdit::buildFormSettings', $this, 'hookAfterProcessPageEditBuildFormSettings');
     }
@@ -140,158 +142,122 @@ class PagePathHistoryManager extends Process implements Module
         $wrapper->insertAfter($field, $wrapper->children()->first());
     }
 
-    public function ___execute()
+    /**
+     * Get a page by its history page path.
+     *
+     * @param string $path History URL to lookup.
+     * @return NullPage|Page Page if path exists, NullPage if not.
+     */
+    public function fetchPageByHistoryPath($path = '')
     {
-        $out = '';
-
-        $isPost = 0 < strlen($this->input->post('id'));
-        $pageId = (int) $this->input->{$isPost ? 'post' : 'get'}('id');
-
-        if (!$pageId) {
-            throw new WireException('Please supply a valid page id.');
+        $page = new NullPage();
+        $path = $this->sanitizer->url($path); // Sanitize path
+        if (empty($path)) {
+            return $page;
         }
 
-        $page = $this->pages->get($pageId);
-        if (!$page || $page instanceof NullPage) {
-            throw new WireException('No page found for given path.');
+        /* @var WireDatabasePDO $db */
+        $db = $this->wire('database');
+        $query = $db->prepare("SELECT pages_id FROM {$this->dbTableName} WHERE path=:path LIMIT 1");
+        $query->bindValue('path', $path);
+        $query->execute();
+        if (0 < $query->rowCount()) {
+            $pageId = (int) $query->fetchColumn();
+            $page = $this->pages->get($pageId);
         }
+        $query->closeCursor();
 
-        $path = $this->input->{$isPost ? 'post' : 'get'}('path');
-        $redirectUrl = "{$this->processPage->path}?id={$pageId}&path={$path}";
-
-        if ($isPost) {
-            // Check whether path is valid
-            if (!$path) {
-                $msg = $this->_('Please enter a valid path.'); // Message: invalid path given
-                $this->message($msg, Notice::warning);
-                $this->session->redirect($redirectUrl);
-            }
-
-            // Make sure that path starts with but doesn't end with slash
-            $path = '/' . trim($path, '/');
-
-            // Prepare path selector value
-            $pathSelector = $this->sanitizer->selectorValue($path);
-
-            // Check whether path is already used as regular path for another page
-            if (0 < $this->pages->count("path={$pathSelector},include=all")) {
-                $msg = $this->_('The requested path is already in use by another page.'); // Message: path already in use
-                $this->message($msg, Notice::warning);
-                $this->session->redirect($redirectUrl);
-            }
-
-            // Check whether path is already used as history path for another page
-            $existingHistoryPage = $this->fetchPageByHistoryPath($pathSelector);
-            if ($existingHistoryPage && !($existingHistoryPage instanceof NullPage)) {
-                $msg = $this->_('The requested path is already in use as history path of another page.'); // Message: path already in use as history path
-                $this->message($msg, Notice::warning);
-                $this->session->redirect($redirectUrl);
-            }
-
-            // Try to add path to the database
-            $success = $this->addHistoryPath($path, $pageId);
-
-            // Prepare message
-            $msg = $success ?
-                $this->_('Successfully added history path "%1$s" for page "%2$s".') : // Message: history path was added
-                $this->_('Unable to add history path "%1$s" for page "%2$s".'); // Message: history path could not be added
-            $msgFlags = Notice::log;
-            if (!$success) {
-                $msgFlags |= Notice::warning;
-            }
-            $this->message(sprintf($msg, $path, $page->path), $msgFlags);
-
-            // Redirect to page edit form
-            $pageEditUrl = $this->editUrl . "?id={$page->id}";
-            $this->session->redirect($pageEditUrl);
-        }
-
-        $form = $this->buildFormCreateHistoryPath($page, $path);
-        $out .= $form->render();
-
-        return $out;
+        return $page;
     }
 
     /**
-     * Handle history path deletion requests.
+     * Fetch all paths for a given page from the database.
      *
-     * @return string Page output
-     * @throws WireException
+     * @param Page|int $page Lookup page object or id
+     * @param bool $sort True if paths should be sorted by length
+     * @return array Saved history paths for that page
      */
-    public function ___executeDelete()
+    public function fetchHistoryPathsByPage($page, $sort = true)
     {
-        $out = '';
-        $isPost = 0 < strlen($this->input->post('path'));
-        $path = $this->input->{$isPost ? 'post' : 'get'}('path');
-        if (!$path) {
-            throw new WireException('Please supply a valid path.');
+        if (is_object($page) && $page instanceof Page) {
+            $page = $page->id;
+        } else {
+            $page = intval($page, 10);
         }
 
-        $page = $this->fetchPageByHistoryPath($path);
-        if (!$page || $page instanceof NullPage) {
-            throw new WireException('No page found for given path.');
-        }
+        /* @var WireDatabasePDO $db */
+        $db = $this->wire('database');
+        $query = $db->prepare("SELECT path, created FROM {$this->dbTableName} WHERE pages_id=:id");
+        $query->bindValue(':id', $page);
+        $query->execute();
 
-        if ($isPost) {
-            // Redirect back if confirmation was not checked
-            if (!$this->input->post('confirmed')) {
-                $msg = $this->_('Please confirm the deletion of path "%s".'); // Message: deletion not confirmed
-                $this->message(sprintf($msg, $path), Notice::warning);
-                $this->session->redirect("{$this->processPage->path}delete?path={$path}");
+        $paths = array();
+        if (0 < $query->rowCount()) {
+            while ($path = $query->fetch(PDO::FETCH_ASSOC)) {
+                $path['pageId'] = $page;
+                $paths[] = $path;
             }
+        }
+        $query->closeCursor();
 
-            // Try to delete history path from database
-            $success = $this->deleteHistoryPath($path);
-
-            // Prepare message
-            $msg = $success ?
-                $this->_('Successfully deleted history path "%s".') : // Message: history path was deleted
-                $this->_('Unable to delete history path "%s".'); // Message: history path could not be deleted
-            $msgFlags = Notice::log;
-            if (!$success) {
-                $msgFlags |= Notice::warning;
-            }
-            $this->message(sprintf($msg, $path), $msgFlags);
-
-            // Redirect to page edit form
-            $pageEditUrl = $this->editUrl . "?id={$page->id}";
-            $this->session->redirect($pageEditUrl);
+        if ($sort) {
+            usort($paths, 'self::compareStringsByLength');
         }
 
-        $form = $this->buildFormDeleteConfirmation($path, $page);
-        $out .= $form->render();
-
-        return $out;
+        return $paths;
     }
 
-    public function install()
-    {
-        parent::___install();
+    /**
+     * Add a history path to the database.
+     *
+     * @param string $path Path to be added
+     * @param Page|int $page Page object or id to be associated to path
+     * @return bool True if addition was successful, false if not
+     */
+    public function addHistoryPath($path, $page) {
+        $success = false;
 
-        /* Create manager page */
-        if (!count($this->pages->find('name=' . __CLASS__))) {
-            $p = new Page();
-            $p->template = $this->templates->get('admin');
-            $p->title = 'Page Path History Manager';
-            $p->name = __CLASS__;
-            $p->parent = $this->pages->get(3); // Create as children of /admin/pages
-            $p->status = Page::statusHidden | Page::statusSystem; // Hide in menu and prevent deletion
-            $p->process = $this;
-            $p->save();
+        if (is_object($page) && $page instanceof Page) {
+            $page = $page->id;
+        } else {
+            $page = intval($page, 10);
         }
+
+        /* @var WireDatabasePDO $db */
+        $db = $this->wire('database');
+        $query = $db->prepare("INSERT INTO {$this->dbTableName} SET path=:path, pages_id=:pages_id, created=NOW()");
+        $query->bindValue(":path", $path);
+        $query->bindValue(":pages_id", $page, PDO::PARAM_INT);
+        $query->execute();
+        if (0 < $query->rowCount()) {
+            $success = true;
+        }
+        $query->closeCursor();
+
+        return $success;
     }
 
-    public function uninstall()
+    /**
+     * Delete a history path from the database.
+     *
+     * @param string $path Path to be deleted
+     * @return bool True if deletion was successful, false if not
+     */
+    public function deleteHistoryPath($path)
     {
-        parent::___uninstall();
+        $success = false;
 
-        /* Delete manager page */
-        $p = $this->pages->get('name=' . __CLASS__);
-        if ($p && !($p instanceof NullPage)) {
-            $p->status = Page::statusSystemOverride; // Allow status override
-            $p->status = 0; // Remove system status to enable deletion
-            $this->pages->delete($p);
+        /* @var WireDatabasePDO $db */
+        $db = $this->wire('database');
+        $query = $db->prepare("DELETE FROM {$this->dbTableName} WHERE path=:path LIMIT 1");
+        $query->bindValue(':path', $path);
+        $query->execute();
+        if (0 < $query->rowCount()) {
+            $success = true;
         }
+        $query->closeCursor();
+
+        return $success;
     }
 
     /**
@@ -341,7 +307,7 @@ class PagePathHistoryManager extends Process implements Module
                 $out .= '<div class="pph-man-table-header">' . $groupLabel . '</div>';
                 if (empty(${$groupName})) {
                     $msg = $this->_('There are no former URLs registered in this category.'); // Page Path History Manager: empty group notice
-                    $out .= '<div class="pph-man-notice-groupempty"><p class="notes">' .
+                    $out .= '<div class="pph-man-notice-group-empty"><p class="notes">' .
                         $msg . '</p></div>';
                 } else {
                     // Prepare data for building the path history table of this group
@@ -399,195 +365,6 @@ class PagePathHistoryManager extends Process implements Module
         // Fill inputfield with content and return it
         $field->value = $out;
         return $field;
-    }
-
-    /**
-     * Build the path creation form for a given page (and optional path).
-     *
-     * @param $page The page for which the path should be created.
-     * @param string $path A path to prefill the form with. Optional.
-     * @return InputfieldForm The form to create a path.
-     */
-    protected function buildFormCreateHistoryPath($page, $path = '')
-    {
-        /* @var InputfieldForm $form */
-        $form = $this->modules->get('InputfieldForm');
-        $form->attr('method', 'post');
-        $form->description = sprintf($this->_('Create history path for page "%s"'), $page->path); // Path creation form headline
-
-        /* @var InputfieldHidden $field */
-        $field = $this->modules->get('InputfieldHidden');
-        $field->attr('name', 'id');
-        $field->attr('value', $page->id);
-        $form->append($field);
-
-        /* @var InputfieldHidden $field */
-        $field = $this->modules->get('InputfieldText');
-        $field->attr('name', 'path');
-        $field->attr('value', $path);
-        $field->label = $this->_('Path');
-        $field->description = $this->_('Please enter the URL you want to add for this page.');
-        $form->append($field);
-
-        /* @var InputfieldSubmit $field */
-        $field = $this->modules->get('InputfieldSubmit');
-        $form->append($field);
-
-        return $form;
-    }
-
-    /**
-     * Build the path deletion confirmation form for a given page and path.
-     *
-     * @param $path The path to be deleted.
-     * @param $page The page for which the path should be deleted.
-     * @return InputfieldForm The form to confirm the deletion.
-     */
-    protected function buildFormDeleteConfirmation($path, $page)
-    {
-        /* @var InputfieldForm $form */
-        $form = $this->modules->get('InputfieldForm');
-        $form->attr('action', 'delete');
-        $form->attr('method', 'post');
-        $form->description = sprintf($this->_('Delete history path "%1$s" for page "%2$s"'), $path, $page->path); // Path deletion confirmation form headline
-
-        /* @var InputfieldHidden $field */
-        $field = $this->modules->get('InputfieldHidden');
-        $field->attr('name', 'path');
-        $field->attr('value', $path);
-        $form->append($field);
-
-        /* @var InputfieldCheckbox $field */
-        $field = $this->modules->get('InputfieldCheckbox');
-        $field->attr('name', 'confirmed');
-        $field->attr('value', 'confirmed');
-        $field->label = $this->_('Are you sure?'); // Checkbox label to confirm they want to delete a given history path
-        $field->description = $this->_('Please confirm that you understand the above by clicking the checkbox below.'); // Checkbox description to confirm they want to delete a given history path
-        $form->append($field);
-
-        /* @var InputfieldSubmit $field */
-        $field = $this->modules->get('InputfieldSubmit');
-        $form->append($field);
-
-        return $form;
-    }
-
-    /**
-     * Get a page by its history page path.
-     *
-     * @param string $path History URL to lookup.
-     * @return NullPage|Page Page if path exists, NullPage if not.
-     */
-    protected function fetchPageByHistoryPath($path = '')
-    {
-        $page = new NullPage();
-        $path = $this->sanitizer->url($path); // Sanitize path
-        if (empty($path)) {
-            return $page;
-        }
-
-        /* @var WireDatabasePDO $db */
-        $db = $this->wire('database');
-        $query = $db->prepare("SELECT pages_id FROM {$this->dbTableName} WHERE path=:path LIMIT 1");
-        $query->bindValue('path', $path);
-        $query->execute();
-        if (0 < $query->rowCount()) {
-            $pageId = (int) $query->fetchColumn();
-            $page = $this->pages->get($pageId);
-        }
-        $query->closeCursor();
-
-        return $page;
-    }
-
-    /**
-     * Fetch all paths for a given page from the database.
-     *
-     * @param Page|int $page Lookup page object or id
-     * @param bool $sort True if paths should be sorted by length
-     * @return array Saved history paths for that page
-     */
-    protected function fetchHistoryPathsByPage($page, $sort = true)
-    {
-        if (is_object($page) && $page instanceof Page) {
-            $page = $page->id;
-        } else {
-            $page = intval($page, 10);
-        }
-
-        /* @var WireDatabasePDO $db */
-        $db = $this->wire('database');
-        $query = $db->prepare("SELECT path, created FROM {$this->dbTableName} WHERE pages_id=:id");
-        $query->bindValue(':id', $page);
-        $query->execute();
-
-        $paths = array();
-        if (0 < $query->rowCount()) {
-            while ($path = $query->fetch(PDO::FETCH_ASSOC)) {
-                $path['pageId'] = $page;
-                $paths[] = $path;
-            }
-        }
-        $query->closeCursor();
-
-        if ($sort) {
-            usort($paths, 'self::compareStringsByLength');
-        }
-
-        return $paths;
-    }
-
-    /**
-     * Add a history path to the database.
-     *
-     * @param string $path Path to be added
-     * @param Page|int $page Page object or id to be associated to path
-     * @return bool True if addition was successful, false if not
-     */
-    protected function addHistoryPath($path, $page) {
-        $success = false;
-
-        if (is_object($page) && $page instanceof Page) {
-            $page = $page->id;
-        } else {
-            $page = intval($page, 10);
-        }
-
-        /* @var WireDatabasePDO $db */
-        $db = $this->wire('database');
-        $query = $db->prepare("INSERT INTO {$this->dbTableName} SET path=:path, pages_id=:pages_id, created=NOW()");
-        $query->bindValue(":path", $path);
-        $query->bindValue(":pages_id", $page, PDO::PARAM_INT);
-        $query->execute();
-        if (0 < $query->rowCount()) {
-            $success = true;
-        }
-        $query->closeCursor();
-
-        return $success;
-    }
-
-    /**
-     * Delete a history path from the database.
-     *
-     * @param string $path Path to be deleted
-     * @return bool True if deletion was successful, false if not
-     */
-    protected function deleteHistoryPath($path)
-    {
-        $success = false;
-
-        /* @var WireDatabasePDO $db */
-        $db = $this->wire('database');
-        $query = $db->prepare("DELETE FROM {$this->dbTableName} WHERE path=:path LIMIT 1");
-        $query->bindValue(':path', $path);
-        $query->execute();
-        if (0 < $query->rowCount()) {
-            $success = true;
-        }
-        $query->closeCursor();
-
-        return $success;
     }
 
     /**
