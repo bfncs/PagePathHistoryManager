@@ -98,7 +98,7 @@ class ProcessPagePathHistoryManager extends Process
             $path = '/' . trim($path, '/');
 
             // Prepare path selector value
-            $pathSelector = $this->sanitizer->selectorValue($path);
+            $pathSelector = $this->sanitizer->selectorValue($this->sanitizer->url($path));
 
             // Check whether path is already used as regular path for another page
             if (0 < $this->pages->count("path={$pathSelector},include=all")) {
