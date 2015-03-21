@@ -5,7 +5,7 @@
  *
  * Manage PagePathHistory entries for any page on the Page Edit form.
  *
- * @version 1.1.0
+ * @version 1.1.1
  * @license MIT
  * @author Marc Löhe <marc@marcloehe.de>
  * @copyright Copyright (c) 2015, Marc Löhe
@@ -41,7 +41,7 @@ class PagePathHistoryManager extends WireData implements Module
     {
         return array(
             'title' => __('Page Path History Manager'),
-            'version' => 110,
+            'version' => 111,
             'summary' => __('Manage PagePathHistory entries for any page on the Page Edit form.'),
             'author' => 'Marc Löhe',
             'icon' => 'archive',
