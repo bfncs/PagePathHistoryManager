@@ -150,12 +150,6 @@ class PagePathHistoryManager extends WireData implements Module
      */
     public function fetchPageByHistoryPath($path = '')
     {
-        $page = new NullPage();
-        $path = $this->sanitizer->url($path); // Sanitize path
-        if (empty($path)) {
-            return $page;
-        }
-
         /* @var WireDatabasePDO $db */
         $db = $this->wire('database');
         $query = $db->prepare("SELECT pages_id FROM {$this->dbTableName} WHERE path=:path LIMIT 1");
