@@ -84,7 +84,7 @@ class PagePathHistoryManager extends WireData implements Module
         // Add hooks and setup needed variables
         $this->editUrl = $this->config->urls->admin . 'page/edit/';
 
-        $processPageName = strtolower('ProcessPagePathHistoryManager');
+        $processPageName = strtolower(get_class($this));
         $this->processPage = $this->pages->get("name={$processPageName},has_parent={$this->config->adminRootPageID},include=all");
 
         $this->addHookBefore('ProcessPageEdit::execute', $this, 'hookBeforeProcessPageEditExecute');

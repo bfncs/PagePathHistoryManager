@@ -55,7 +55,7 @@ class ProcessPagePathHistoryManager extends Process
 
         $this->manager = $this->modules->get('PagePathHistoryManager');
 
-        $processPageName = strtolower(get_class($this));
+        $processPageName = strtolower(get_class($this->manager));
         $this->processPage = $this->pages->get("name={$processPageName},has_parent={$this->config->adminRootPageID},include=all");
 
         $this->editUrl = $this->config->urls->admin . 'page/edit/';
@@ -196,6 +196,7 @@ class ProcessPagePathHistoryManager extends Process
         parent::___install();
 
         /* Create manager page */
+        $this->manager = $this->modules->get('PagePathHistoryManager');
         $processPageName = strtolower(get_class($this->manager));
         if (!count($this->pages->find("name={$processPageName},include=all"))) {
             $p = new Page();
