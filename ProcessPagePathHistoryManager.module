@@ -101,7 +101,7 @@ class ProcessPagePathHistoryManager extends Process
             $pathSelector = $this->sanitizer->selectorValue($this->sanitizer->url($path));
 
             // Check whether path is already used as regular path for another page
-            if (0 < $this->pages->count("path={$pathSelector},include=all")) {
+            if (!empty($pathSelector) && 0 < $this->pages->count("path={$pathSelector},include=all")) {
                 $msg = $this->_('The requested path is already in use by another page.'); // Message: path already in use
                 $this->message($msg, Notice::warning);
                 $this->session->redirect($redirectUrl);
