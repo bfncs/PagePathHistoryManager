@@ -5,7 +5,7 @@
  *
  * Manage PagePathHistory entries for any page on the Page Edit form.
  *
- * @version 1.1.2
+ * @version 1.1.3
  * @license MIT
  * @author Marc Löhe <marc@marcloehe.de>
  * @copyright Copyright (c) 2015, Marc Löhe
@@ -35,7 +35,7 @@ class ProcessPagePathHistoryManager extends Process
     {
         return array(
             'title' => __('Page Path History Manager Process'),
-            'version' => 112,
+            'version' => 113,
             'summary' => __('Manage PagePathHistory entries for any page on the Page Edit form.'),
             'author' => 'Marc Löhe',
             'icon' => 'archive',
