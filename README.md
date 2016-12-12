@@ -1,6 +1,8 @@
 # Page Path History Manager Module for Processwire
 
-This modules allows you to easily manage past page URLs tracked with the  [PagePathHistory] module.
+**Note:** This module is not actively maintained and has not been tested with ProcessWire 3.x. If you think the functionality of this module is useful and you want to maintain it, please get in touch.
+
+This modules allows you to easily manage past page URLs tracked with the [PagePathHistory] module.
 
 It extends the settings tab on the page edit form in the backend and allows you to:
 
