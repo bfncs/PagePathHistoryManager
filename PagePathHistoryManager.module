@@ -1,11 +1,13 @@
 <?php
+namespace ProcessWire;
+use PDO;
 
 /**
  * Page Path History Manager Module
  *
  * Manage PagePathHistory entries for any page on the Page Edit form.
  *
- * @version 1.1.3
+ * @version 1.1.4
  * @license MIT
  * @author Marc Löhe <marc@marcloehe.de>
  * @copyright Copyright (c) 2015, Marc Löhe
@@ -41,7 +43,7 @@ class PagePathHistoryManager extends WireData implements Module
     {
         return array(
             'title' => __('Page Path History Manager'),
-            'version' => 113,
+            'version' => 114,
             'summary' => __('Manage PagePathHistory entries for any page on the Page Edit form.'),
             'author' => 'Marc Löhe',
             'icon' => 'archive',
@@ -71,7 +73,7 @@ class PagePathHistoryManager extends WireData implements Module
         foreach ($implementingModules as $moduleName) {
             if ($this->modules->isInstalled($moduleName)) {
                 $active = true;
-                $this->dbTableName = constant($moduleName . '::dbTableName');
+                $this->dbTableName = PagePathHistory::dbTableName;
                 break;
             }
         }
@@ -84,7 +86,7 @@ class PagePathHistoryManager extends WireData implements Module
         // Add hooks and setup needed variables
         $this->editUrl = $this->config->urls->admin . 'page/edit/';
 
-        $processPageName = strtolower(get_class($this));
+        $processPageName = strtolower($this->className());
         $this->processPage = $this->pages->get("name={$processPageName},has_parent={$this->config->adminRootPageID},include=all");
 
         $this->addHookBefore('ProcessPageEdit::execute', $this, 'hookBeforeProcessPageEditExecute');
